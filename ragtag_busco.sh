@@ -49,15 +49,23 @@ if [ ! "$reference" ] || [ ! "$genome" ] || [ ! "$output" ]; then
   echo "$usage" >&2; exit 1
 fi
 
-
+echo "######"
 echo "### Ragtag step 1/3 : Correct"
+echo "######"
+
 ragtag.py correct ${reference} ${genome} -o ${output}/correct
 
+echo "######"
 echo "### Ragtag step 2/3 : scaffold"
+echo "######"
 ragtag.py scaffold ${reference} ${output}/correct/ragtag.correct.fasta -r -o ${output}/scaffold
 
+echo "######"
 echo "### Ragtag step 3/3 : patch"
+echo "######"
 ragtag.py patch ${reference} ${output}/scaffold/ragtag.scaffold.fasta -o ${output}/patch
 
+echo "######"
 echo "### BUSCO"
+echo "######"
 busco -i ${output}/patch/ragtag.patch.fasta -o busco --mode genome --lineage_dataset ${lineage} --tar -f
