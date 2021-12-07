@@ -50,6 +50,14 @@ if [ ! "$reference" ] || [ ! "$genome" ] || [ ! "$output" ]; then
 fi
 
 echo "######"
+echo "### Files operation"
+echo "######"
+
+mkdir -p ${output}/correct
+mkdir -p ${output}/scaffold
+mkdir -p ${output}/patch
+
+echo "######"
 echo "### Ragtag step 1/3 : Correct"
 echo "######"
 
