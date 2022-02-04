@@ -13,7 +13,7 @@
 Help()
 {
    # Display Help
-   echo """
+   echo "
    #######
    ### Transcriptomic_pipeline
    #######
@@ -26,7 +26,7 @@ Help()
    I can't get no relief
 
    Syntax:
-   transcriptomic_pipeline -M [C|R|T|A] -o output_dir [-h|E|v|V|t|m|D|F|R|p|l|M|u]
+   transcriptomic_pipeline -M [C|R|T|A] -o output_dir -F forward_reads -R reverse_reads [-h|E|v|V|t|m|D|p|l|M|u]
    options:
    -h         Print this Help.
    ### Mandatory
@@ -66,14 +66,35 @@ Version()
 
 Fastqc()
 {
+  # Exocet specific : cannot use conda's java #
+  source deactivate
+  #############################################
+
   # Reads quelity evaluation tool
   echo "starting fastqc"
+
+  # Verbose
+  if [[ ${verbose} ]]; then
+    echo mkdir -p ${output}/fastqc_reports
+    echo fastqc -t ${num_threads_fastqc} ${splittedFiles} -o ${output}/fastqc_reports/
+  fi
+
   mkdir -p "${output}/fastqc_reports"
-  for reads_file in ${splittedFiles}; do
-    fastqc ${reads_file} -o ${output}/fastqc_reports/
-  done
+  # Fastqc allow a max of 6 threads
+  if [[ ${num_threads} -gt 6 ]]; then
+    num_threads_fastqc=6
+  else
+    num_threads_fastqc=${num_threads}
+  fi
+  fastqc ${splittedFiles} -o ${output}/fastqc_reports/
+
+  # Exocet specific : cannot use conda's java #
+  conda activate
+  #############################################
+
   if [ "${run_multiqc}" ]; then
-    multiqc ${output}/fastqc_reports/
+    echo "running multiqc"
+    multiqc ${output}/fastqc_reports/ -o ${output}/fastqc_reports/
   fi
   echo "fastqc done"
 }
@@ -87,7 +108,7 @@ Cutadapt()
       -a AGATCGGAAGAGCACACGTCTGAACTCCAGTCA \
       -A AGATCGGAAGAGCGTCGTGTAGGGAAAGAGTGT \
       -o ${output}/cutadapt/adapters.${name_forward} \
-      -p ${output}/cutadapt/adapters.${name_forward} \
+      -p ${output}/cutadapt/adapters.${name_reverse} \
       "${process_forward}" \
       "${process_reverse}" ;
   echo "cutadapt done"
@@ -100,7 +121,7 @@ Trimmomatic()
   mkdir -p "${output}/trimmomatic"
   trimmomatic PE \
       ${output}/cutadapt/adapters.${name_forward} \
-      ${output}/cutadapt/adapters.${name_forward} \
+      ${output}/cutadapt/adapters.${name_reverse} \
       ${output}/trimmomatic/paired_trimmed.${name_forward} \
       ${output}/trimmomatic/unpaired_trimmed.${name_forward} \
       ${output}/trimmomatic/paired_trimmed.${name_reverse} \
@@ -120,7 +141,7 @@ Bowtie2_filter_align()
 {
   echo "Starting bowtie2 alignement"
   mkdir -p "${output}/bowtie2"
-  bowtie2 --very-sensitive-local --phred33 --threads ${num_threads} \
+  bowtie2 --quiet --very-sensitive-local --phred33 --threads ${num_threads} \
     -x "${unwantedRNA_file}" \
     -1 ${output}/trimmomatic/paired_trimmed.${name_forward} \
     -2 ${output}/trimmomatic/paired_trimmed.${name_reverse} \
@@ -130,9 +151,9 @@ Bowtie2_filter_align()
     --al-gz ${output}/bowtie2/blacklist_unpaired_aligned.${name_forward} \
     --un-gz ${output}/bowtie2/blacklist_unpaired_unaligned.${name_forward} \
 
-  mv ${output}/bowtie2/blacklist_paired_unaligned.${name_forward::-3}.1.gz \
+  mv ${output}/bowtie2/blacklist_paired_unaligned.${name_forward::-3}.1.gz\
     ${output}/bowtie2/filtered.${name_forward}
-  mv ${output}/bowtie2/blacklist_paired_unaligned.${name_forward::-3}.2.gz \
+  mv ${output}/bowtie2/blacklist_paired_unaligned.${name_forward::-3}.2.gz\
     ${output}/bowtie2/filtered.${name_reverse}
   echo "Bowtie2 alignement done"
 }
@@ -200,9 +221,9 @@ Busco()
   echo "Starting Busco"
   mkdir -p ${output}/assembly_evaluation/busco
   busco\
-        -i ${output}/trinity/Trinity.fasta
-        -o busco --mode transcriptome --lineage_dataset ${lineage} --tar\
-        --download_path ${output}/reference/
+        -i ${output}/trinity/Trinity.fasta\
+        -o ${output}/assembly_evaluation/busco --mode transcriptome\
+        --lineage_dataset ${lineage} --tar --download_path ${output}/reference/
   echo "Busco done"
 }
 
@@ -212,7 +233,7 @@ Busco()
 
 ### Argument parsing
 
-while getopts hM:o:F:R:t:m:vVfdql: options
+while getopts hM:o:F:R:t:m:vVfdql:u:s: options
 do
     case "${options}" in
         h) Help; exit;;
@@ -223,10 +244,10 @@ do
         R) reverse_file=${OPTARG};;
         t) num_threads=${OPTARG};;
         m) max_memory=${OPTARG};;
-        v) verbose=${OPTARG};;
-        f) force_indexes=${OPTARG};;
-        d) download_db=${OPTARG};;
-        q) run_multiqc=${OPTARG};;
+        v) verbose=True;;
+        f) force_indexes=True;;
+        d) download_db=True;;
+        q) run_multiqc=True;;
         l) lineage=${OPTARG};;
         u) unwantedRNA_file=${OPTARG}
            if [ ! -f "${unwantedRNA_file}" ]; then
@@ -288,7 +309,7 @@ case "${mode}" in
 
       # Done
       echo "R mode over. Check your fastqc reports files. You can then move on
-      to T mode."
+to T mode."
       exit 0;;
 
   ### MODE TRIM & FILTER
@@ -302,7 +323,7 @@ case "${mode}" in
       IFS=',' read -ra reverseFiles_array <<< ${reverse_file}
 
       # Verification of the number of input files
-      if [[ ${#forwardFiles_array[*]} -neq ${#reverseFiles_array[*]} ]]; then
+      if [[ ${#forwardFiles_array[*]} -ne ${#reverseFiles_array[*]} ]]; then
         echo "You have a different number of forward and reverse files. Please
         check your files"; Help >&2; exit 1;
       fi
@@ -311,7 +332,7 @@ case "${mode}" in
       if [[ ! "${unwantedRNA_file}" ]]; then
 
         # Won't proceed without an unwantedRNA_file
-        if [[ ! "${download_db}" ]] && [[ ! -f ${output}/reference/unwanted_RNA.fa ]]; then
+        if [[ ! "${download_db}" ]] && [[ ! -f ${output}/reference/unwanted_RNA.fa.gz ]]; then
           echo "You need to provide a file of RNA to filter out with -u file or
           allow the programm to download one with -d"; Help >&2; exit 1;
 
@@ -319,44 +340,48 @@ case "${mode}" in
         # check download integrity)
 
         # SSU
-        elif [[ ! -f ${output}/reference/unwanted_RNA.fa ]]; then
+        elif [[ ! -f ${output}/reference/unwanted_RNA.fa.gz ]]; then
           wget https://www.arb-silva.de/fileadmin/silva_databases/release_138.1/Exports/SILVA_138.1_SSURef_tax_silva_trunc.fasta.gz \
-          -o ${output}/reference/
+          -P ${output}/reference/
           wget https://www.arb-silva.de/fileadmin/silva_databases/release_138.1/Exports/SILVA_138.1_SSURef_tax_silva_trunc.fasta.gz.md5 \
-          -o ${output}/reference/
+          -P ${output}/reference/
           # Verification of the integrity of the downloaded file
-          if [[ $( md5sum ${output}/reference/SILVA_138.1_SSURef_tax_silva_trunc.fasta.gz) != $(cat ${output}/reference/SILVA_138.1_SSURef_tax_silva_trunc.fasta.gz.md5) ]]; then
+          if [[ $( md5sum ${output}/reference/SILVA_138.1_SSURef_tax_silva_trunc.fasta.gz|cut -f 1 -d ' ') != $(cat ${output}/reference/SILVA_138.1_SSURef_tax_silva_trunc.fasta.gz.md5|cut -f 1 -d ' ') ]]; then
             echo "There was a problem with the download. Please try again or use
             your own file with -u file."; exit 1;
           fi
 
           # LSU
           wget https://www.arb-silva.de/fileadmin/silva_databases/release_138.1/Exports/SILVA_138.1_LSURef_tax_silva_trunc.fasta.gz \
-          -o ${output}/reference/
+          -P ${output}/reference/
           wget https://www.arb-silva.de/fileadmin/silva_databases/release_138.1/Exports/SILVA_138.1_LSURef_tax_silva_trunc.fasta.gz.md5 \
-          -o ${output}/reference/
+          -P ${output}/reference/
           # Verification of the integrity of the downloaded file
-          if [[ $( md5sum ${output}/reference/SILVA_138.1_LSURef_tax_silva_trunc.fasta.gz) != $(cat ${output}/reference/SILVA_138.1_LSURef_tax_silva_trunc.fasta.gz.md5) ]]; then
+          if [[ $( md5sum ${output}/reference/SILVA_138.1_LSURef_tax_silva_trunc.fasta.gz|cut -f 1 -d ' ') != $(cat ${output}/reference/SILVA_138.1_LSURef_tax_silva_trunc.fasta.gz.md5|cut -f 1 -d ' ') ]]; then
             echo "There was a problem with the download. Please try again or use
             your own file with -u file."; exit 1;
           fi
 
           # Merging both SILVA files into 1 unwantedRNA_file
-          touch ${output}/reference/unwanted_RNA.fa
-          cat ${output}/reference/SILVA_138.1_LSURef_tax_silva_trunc.fasta.gz > ${output}/reference/unwanted_RNA.fa
-          cat ${output}/reference/SILVA_138.1_SSURef_tax_silva_trunc.fasta.gz >> ${output}/reference/unwanted_RNA.fa
           # SILVA database contains U instead of T. Will modify the header
           # aswell but it doesn't matter in our case
-          sed -i 's/U/T/g' ${output}/reference/unwanted_RNA.fa
+          echo "Creation of unwanted_RNA.fa.gz"
+          touch ${output}/reference/unwanted_RNA.fa
+          zcat ${output}/reference/SILVA_138.1_LSURef_tax_silva_trunc.fasta.gz|sed 's/U/T/g' > ${output}/reference/unwanted_RNA.fa
+          zcat ${output}/reference/SILVA_138.1_SSURef_tax_silva_trunc.fasta.gz|sed 's/U/T/g' >> ${output}/reference/unwanted_RNA.fa
+          gzip -v ${output}/reference/unwanted_RNA.fa
+          unwantedRNA_file="${output}/reference/unwanted_RNA.fa.gz"
 
+        else
+          echo "using found ${output}/reference/unwanted_RNA.fa.gz file"
+          unwantedRNA_file="${output}/reference/unwanted_RNA.fa.gz"
         fi
-        ${unwantedRNA_file}="${output}/reference/unwanted_RNA.fa"
 
       fi
 
       # Building Bowtie2 unwantedRNA index if -f or none found
       if [[ ${force_indexes} ]] || [[ ! -f ${unwantedRNA_file}.1.bt2 ]]; then
-        ${file_to_index}=${unwantedRNA_file}
+        file_to_index=${unwantedRNA_file}
         Bowtie2_build
       else
         echo "Using found bowtie2 index"
@@ -377,7 +402,7 @@ case "${mode}" in
       Fastqc
 
       echo "T mode is over. Check your new fastqc reports files. If you're happy
-      with your reads quality, move on to A mode."
+with your reads quality, move on to A mode."
       exit 0;;
 
   ### MODE CHECK MD5
@@ -394,7 +419,7 @@ case "${mode}" in
       IFS=',' read -ra reverseFiles_array <<< ${reverse_file}
 
       # Verification of the number of input files
-      if [[ ${#forwardFiles_array[*]} -neq ${#reverseFiles_array[*]} ]]; then
+      if [[ ${#forwardFiles_array[*]} -ne ${#reverseFiles_array[*]} ]]; then
         echo "You have a different number of forward and reverse files. Please
         check your files"; Help >&2; exit 1;
       fi
@@ -416,10 +441,6 @@ case "${mode}" in
           echo "No protein database found. Please provide a protein db file to
           blast against with -s file or allow download with -d"; Help >&2; exit 1;
 
-        # Download of the db if asked (2 files : LSU and SSU + 2 md5 files to
-        # check download integrity)
-
-        # SSU
       elif [[ ! -f ${output}/reference/protein_DB.fa.gz ]]; then
           wget ftp://ftp.uniprot.org/pub/databases/uniprot/current_release/knowledgebase/complete/uniprot_sprot.fasta.gz \
           -o ${output}/reference/protein_DB.fa.gz
